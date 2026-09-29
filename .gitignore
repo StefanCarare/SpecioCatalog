@@ -1,0 +1,18 @@
+# local
+__pycache__/
+*.pyc
+
+# per-machine: holds the absolute path to the Specio Identify folder
+config/settings.txt
+
+# generated from the catalogue at runtime; rebuilds itself on first run.
+# It lists every species in the user's own catalogue, so it stays out of git.
+cache/
+
+logs/
+
+# scratch probes written while exploring the data. The tests in this folder
+# are tracked on purpose - they are how the rest of the project is checked.
+tools/local_dev/_probe_*.py
+tools/local_dev/_fix*.py
+_fix*.py

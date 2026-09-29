@@ -92,12 +92,3 @@ changed from the top bar.
 
 Diacritics are normalized for search: `Peliniță` is found by typing
 `pelinita`.
-
-## Tests
-
-```
-python -m unittest discover -s tools/local_dev -p "test_*.py"
-```
-
-The database is opened read-only throughout; `test_readonly.py` fails if a
-write ever goes through.

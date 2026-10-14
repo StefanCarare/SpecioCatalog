@@ -117,9 +117,21 @@ def _load_rows(db: CatalogDB) -> tuple[dict[str, dict], dict[str, list[dict]]]:
         profiles[key] = entry
 
     items: dict[str, list[dict]] = {}
+    item_columns = {
+        r[1]
+        for r in db.connection.execute("PRAGMA table_info(catalog_items)")
+    }
+    has_archived = "archived" in item_columns
+    # Soft-deleted photos stay on disk and keep their data; the browser hides
+    # them unless "show archived" is on. A not-yet-migrated DB (no `archived`
+    # column) shows everything.
+    if has_archived and not getattr(db, "show_archived", False):
+        item_filter = " WHERE archived = 0"
+    else:
+        item_filter = ""
     for row in db.connection.execute(
         "SELECT id, scientific_name, ro_name, en_name, category, catalog_path,"
-        " manual_location, metadata_json FROM catalog_items"
+        " manual_location, metadata_json FROM catalog_items" + item_filter
     ):
         key = (row["scientific_name"] or "").strip()
         if key:

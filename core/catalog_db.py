@@ -57,6 +57,9 @@ class CatalogDB:
     def __init__(self, catalog_root: str | Path):
         self.catalog_root = Path(catalog_root).expanduser().resolve()
         self.db_path = resolve_db(self.catalog_root)
+        # When True, archived (soft-deleted) photos are shown too. Toggled
+        # from the UI; read by core.search._load_rows.
+        self.show_archived = False
         if not self.db_path.is_file():
             raise CatalogNotReady(f"Catalog database not found: {self.db_path}")
         uri = (
@@ -108,13 +111,21 @@ class CatalogDB:
         if raw.is_absolute():
             candidates = [raw]
         else:
-            candidates = [
-                self.catalog_root / raw,
-                self.catalog_root / "output" / raw,
-            ]
+            roots = (
+                self.catalog_root,
+                self.catalog_root.parent,
+            )
+            candidates = []
+            for root in roots:
+                candidates.append(root / "output" / raw)
+                candidates.append(root / raw)
         for candidate in candidates:
-            if candidate.is_file():
-                return candidate
+            try:
+                resolved = candidate.resolve()
+            except (OSError, RuntimeError):
+                continue
+            if resolved.is_file():
+                return resolved
         return None
 
     # ------------------------------------------------------------- lifecycle

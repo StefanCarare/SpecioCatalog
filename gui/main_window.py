@@ -53,8 +53,9 @@ PHOTO_MAX = (560, 380)
 _ZOOM_WHEELS = ("<Control-MouseWheel>", "<Control-Button-4>", "<Control-Button-5>")
 
 # Web lookups — the same 🌐 CoL / 🌐 WIKIPEDIA buttons as SpecioIdentify.
-COL_SEARCH_URL = "https://www.catalogueoflife.org/data/search"
+COL_SEARCH_URL = "https://www.catalogueoflife.org/data/search?q="
 WIKIPEDIA_SPECIES_URL = "https://en.wikipedia.org/wiki/"
+INATURALIST_SEARCH_URL = "https://www.inaturalist.org/taxa/search?q="
 class CatalogBrowser:
     """Read-only browser over the catalog of a SpecioIdentify project."""
     def __init__(self, root: tk.Tk) -> None:
@@ -215,6 +216,13 @@ class CatalogBrowser:
             search, text=lang.t("det_btn"), command=self._toggle_determinator
         )
         self.det_toggle_btn.pack(side="left", padx=(8, 0))
+        # Show / hide soft-deleted (archived) photos. Created here so it
+        # exists for self._labels below; packed right after the "find by
+        # description" toggle in _build_ai_panel(). Off by default.
+        self.show_archived_btn = ttk.Button(
+            search, text=lang.t("btn_show_archived"),
+            command=self._toggle_show_archived,
+        )
         # Remember the toolbar row: the determinator panel packs right
         # below it (before the autocomplete suggestion list).
         self.search_frame = search
@@ -493,6 +501,11 @@ class CatalogBrowser:
             command=self._browse_wikipedia,
         )
         self.wiki_btn.pack(side="left", padx=(6, 0))
+        self.inat_btn = ttk.Button(
+            action_row, text=lang.t("btn_open_inaturalist"),
+            command=self._browse_inaturalist,
+        )
+        self.inat_btn.pack(side="left", padx=(6, 0))
         # Divider between the photo/details block and the profile block, so
         # the second sash is visible and grabbable like the first one.
         self._add_block_divider(self.paned, 0, photo_side)
@@ -518,6 +531,7 @@ class CatalogBrowser:
             (self.category_label, "category_lbl"),
             (self.search_btn, "search_btn"),
             (self.det_toggle_btn, "det_btn"),
+            (self.show_archived_btn, "btn_show_archived"),
             (self.det_title, "det_title"),
             (self.det_add_btn, "det_add"),
             (self.det_mode_free_radio, "det_mode_free"),
@@ -1003,6 +1017,25 @@ class CatalogBrowser:
         # auto-selection below expands every ancestor of the first result.
         if self.results and not first_search:
             self._select_first()
+    def _toggle_show_archived(self) -> None:
+        """Show/hide soft-deleted (archived) photos and re-run the search.
+
+        Archived photos are hidden by default; toggling reveals them (still
+        on disk, still in the DB) so they can be reviewed and later restored
+        from SpecioIdentify. Off again returns to the active-only view.
+        """
+        if self.db is None:
+            return
+        self.db.show_archived = not getattr(self.db, "show_archived", False)
+        self.show_archived_btn.configure(
+            text=lang.t("btn_hide_archived" if self.db.show_archived
+                        else "btn_show_archived")
+        )
+        # Nota se setează DUPĂ _do_search, care altfel ar suprascrie-o cu
+        # numărul de rezultate.
+        self._do_search()
+        if self.db.show_archived:
+            self.status_var.set(lang.t("archive_hint_status"))
     # -------------------------------------------------------- determinator
     def _toggle_determinator(self) -> None:
         """Show/hide the trait-filter panel and (re)run the search."""
@@ -1730,11 +1763,12 @@ class CatalogBrowser:
             self._render_photo()
     # -------------------------------------------------------------- actions
     def _browse_col(self) -> None:
-        """🌐 CoL: open Catalogue of Life with the name in the clipboard.
+        """🌐 CoL: open Catalogue of Life with the name as a direct query.
 
-        The CoL search page does not accept a query in the URL, so the
-        species name is copied automatically — on the page it is just
-        Ctrl+V (same behaviour as SpecioIdentify).
+        The CoL search page accepts ``?q=`` in the URL, so the search
+        starts immediately — no manual paste needed. The name is still
+        copied to the clipboard as well, for manual tweaking if needed
+        (same behaviour as SpecioIdentify).
         """
         name = self.current.scientific_name if self.current else ""
         name = (name or "").strip()
@@ -1748,7 +1782,7 @@ class CatalogBrowser:
             self.status_var.set(lang.t("web_copied_clipboard", name=name))
         except Exception:
             pass
-        webbrowser.open(COL_SEARCH_URL)
+        webbrowser.open(COL_SEARCH_URL + quote(name))
 
     def _browse_wikipedia(self) -> None:
         """🌐 WIKIPEDIA: open the species article for the selected species."""
@@ -1760,6 +1794,27 @@ class CatalogBrowser:
         url = WIKIPEDIA_SPECIES_URL + quote(name.replace(" ", "_"))
         webbrowser.open(url)
         self.status_var.set(lang.t("status_web_open", name=name))
+
+    def _browse_inaturalist(self) -> None:
+        """🌐 iNAT: open the iNaturalist taxa page for the selected species.
+
+        Unlike CoL, iNaturalist accepts the query directly in the URL, so the
+        name is placed in the link. We still copy it to the clipboard — like
+        CoL — for manual pasting if the user wants to tweak the search.
+        """
+        name = self.current.scientific_name if self.current else ""
+        name = (name or "").strip()
+        if not name:
+            messagebox.showinfo(lang.t("web_title"), lang.t("web_no_species"))
+            return
+        try:
+            self.win.clipboard_clear()
+            self.win.clipboard_append(name)
+            self.win.update()  # keeps the clipboard after the app closes
+        except Exception:
+            pass
+        webbrowser.open(INATURALIST_SEARCH_URL + quote(name) + "&view=list")
+        self.status_var.set(lang.t("status_web_inat_open", name=name))
 
     def _open_species_folder(self) -> None:
         res = self.current
@@ -1854,6 +1909,9 @@ class CatalogBrowser:
             self.search_frame, text=lang.t("ai_title"), command=self._toggle_ai
         )
         self.ai_toggle.pack(side="left", padx=(8, 0))
+        # Show archived toggle sits right after the "find by description"
+        # button (widget created earlier in _build, packed here for order).
+        self.show_archived_btn.pack(side="left", padx=(8, 0))
         if not cfg["model"]:
             self.ai_status.configure(text=lang.t("ai_offline"))
             for w in (self.ai_entry, self.ai_btn, self.ai_stop_btn):

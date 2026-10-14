@@ -38,13 +38,21 @@ STRINGS: dict[str, tuple[str, str]] = {
     "folder_missing": ("Folderul speciei nu a fost găsit pe disc.", "Species folder was not found on disk."),
     "btn_open_col": ("🌐 CoL", "🌐 CoL"),
     "btn_open_wikipedia": ("🌐 WIKIPEDIA", "🌐 WIKIPEDIA"),
+    "btn_open_inaturalist": ("🌐 iNAT", "🌐 iNAT"),
+    "btn_show_archived": ("🗂 Show archived", "🗂 Show archived"),
+    "btn_hide_archived": ("🗂 Hide archived", "🗂 Hide archived"),
+    "archive_hint_status": (
+        "Pozele arhivate sunt doar pentru vizualizare aici — arhivarea/restaurarea se face în SpecioIdentify (Add Folder din output).",
+        "Archived photos are view-only here — archiving/restoring is done in SpecioIdentify (Add Folder from output).",
+    ),
     "web_title": ("Verificare web", "Web lookup"),
     "web_no_species": ("Nu este selectată nicio specie.", "No species is selected."),
     "web_copied_clipboard": (
-        "Numele '{name}' a fost copiat în clipboard — pe pagina CoL apasă Ctrl+V.",
-        "The name '{name}' was copied to the clipboard — on the CoL page just press Ctrl+V.",
+        "'{name}' — căutare CoL deschisă (numele e și în clipboard).",
+        "'{name}' — CoL search opened (name also in clipboard).",
     ),
     "status_web_open": ("Se deschide Wikipedia: {name}", "Opening Wikipedia: {name}"),
+    "status_web_inat_open": ("Se deschide iNaturalist: {name}", "Opening iNaturalist: {name}"),
     "db_error_title": ("Catalog indisponibil", "Catalog unavailable"),
     "invalid_root_msg": (
         "In folderul ales nu există output\\catalog.db.\nAlege folderul proiectului SpecioIdentify.",

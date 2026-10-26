@@ -44,6 +44,8 @@ try:  # Pillow renders JPG photos inside Tk
 except Exception:  # pragma: no cover - Pillow is in requirements.txt
     PIL_OK = False
 PHOTO_MAX = (560, 380)
+THUMB_SIZE = 96
+THUMB_GALLERY_H = 240
 
 # Every spelling of "Ctrl + wheel" Windows can send. A precision trackpad
 # reports <Control-MouseWheel> with a delta, a notched wheel reports
@@ -81,6 +83,8 @@ class CatalogBrowser:
         self.photo_index = 0
         self.current: SpeciesResult | None = None
         self._photo_image = None  # keep a reference so Tk does not GC the image
+        self._thumb_images: list[ImageTk.PhotoImage] = []
+        self._thumb_cells: list[tk.Widget] = []
         self._crit_map: dict[str, str] = {}
         self._crit_key: str = next(iter(CRITERIA))
         self._cat_values: list[str | None] = []
@@ -506,6 +510,51 @@ class CatalogBrowser:
             command=self._browse_inaturalist,
         )
         self.inat_btn.pack(side="left", padx=(6, 0))
+        self.preview_btn = ttk.Button(
+            action_row, text=lang.t("photo_preview"),
+            command=self._open_main_preview, width=16,
+        )
+        self.preview_btn.pack(side="left", padx=(6, 0))
+        # Galeria de miniatură: toate pozele speciei, cu scroll vertical,
+        # astfel încât utilizatorul poate alege direct o poza fără să apese
+        # de călți "Următoarea".
+        self._gallery_label = ttk.Label(
+            photo_inner,
+            text=lang.t("gallery_title"),
+            font=("", 10, "bold"),
+        )
+        self._gallery_label.pack(anchor="w", pady=(10, 2))
+        self._gallery_canvas = tk.Canvas(
+            photo_inner,
+            height=THUMB_GALLERY_H,
+            highlightthickness=0,
+            borderwidth=0,
+            background="#fafafa",
+        )
+        self._gallery_scroll = ttk.Scrollbar(
+            photo_inner, orient="vertical",
+            command=self._gallery_canvas.yview,
+        )
+        self._gallery_canvas.configure(yscrollcommand=self._gallery_scroll.set)
+        self._gallery_canvas.pack(side="left", fill="x", expand=True)
+        self._gallery_scroll.pack(side="right", fill="y")
+        self._gallery_inner = tk.Frame(self._gallery_canvas, background="#fafafa")
+        self._gallery_win = self._gallery_canvas.create_window(
+            (0, 0), window=self._gallery_inner, anchor="nw",
+        )
+
+        # Refit-ul se face acum în _layout_gallery (care include și itemconfigure),
+        # deci nu mai avem nevoie de un handler separat pe <Configure>.
+        for widget in (self._gallery_canvas, self._gallery_inner):
+            widget.bind("<MouseWheel>", self._gallery_wheel)
+            widget.bind("<Button-4>", self._gallery_wheel)
+            widget.bind("<Button-5>", self._gallery_wheel)
+
+        # Leag rotița și pe fiecare celulă și copiii ei, astfel încât scrollul
+        # funcționează chiar când mouse-ul este peste o miniatura specifică,
+        # nu doar peste spațiul gol al canvas-ului.
+        self._gallery_wheel_widgets: list[tk.Widget] = []
+
         # Divider between the photo/details block and the profile block, so
         # the second sash is visible and grabbable like the first one.
         self._add_block_divider(self.paned, 0, photo_side)
@@ -1668,6 +1717,10 @@ class CatalogBrowser:
         self.photo_label.config(image="", text="")
         self._photo_image = None
         self.photo_nav_label.config(text="")
+        for child in getattr(self, "_gallery_inner", []).winfo_children():
+            child.destroy()
+        self._thumb_images.clear()
+        self._thumb_cells.clear()
         self.detail_date.config(text="")
         self.detail_loc.config(text="")
         self.detail_file.config(text="")
@@ -1681,6 +1734,7 @@ class CatalogBrowser:
             text=lang.t("common_lbl") + " " + common if common else ""
         )
         self._render_photo()
+        self._render_gallery()
         self._render_profile(res)
     def _render_photo(self) -> None:
         if self.current is None:
@@ -1727,6 +1781,11 @@ class CatalogBrowser:
             self._photo_image = None
             return
         self.photo_label.config(image=self._photo_image, text="")
+        self.photo_label.bind(
+            "<Button-1>", lambda _e: self._open_main_preview()
+        )
+        self.photo_label.configure(cursor="hand2")
+
     def _render_profile(self, res: SpeciesResult) -> None:
         self.profile_text.config(state="normal")
         self.profile_text.delete("1.0", "end")
@@ -1761,6 +1820,345 @@ class CatalogBrowser:
         if self.photos and self.photo_index < len(self.photos) - 1:
             self.photo_index += 1
             self._render_photo()
+
+    # -------------------------------------------------------------- gallery
+    def _render_gallery(self) -> None:
+        """Desenează miniaturile tuturor pozelor speciei curente.
+
+        Se numește o singură dată, la schimbarea speciei (_show_species).
+        Layout-ul (grid cu wrapping) se recalculează la fiecare redimensionare
+        a canvas-ului, astfel încât pozele se afișează pe mai multe rânduri
+        (ex. 5 pe primul rând, 6 pe al doilea).
+        """
+        for child in self._gallery_inner.winfo_children():
+            child.destroy()
+        self._thumb_images.clear()
+        self._thumb_cells.clear()
+
+        if not self.photos:
+            return
+
+        thumb = THUMB_SIZE
+        for idx, photo in enumerate(self.photos):
+            cell = tk.Frame(
+                self._gallery_inner,
+                bd=1,
+                relief="solid",
+                bg="#e8f4f8" if idx == self.photo_index else "#ffffff",
+                width=thumb + 12,
+                height=thumb + 40,
+            )
+            cell.pack_propagate(False)
+
+            try:
+                with Image.open(photo.resolved) as im:
+                    im.thumbnail((thumb, thumb))
+                    timage = ImageTk.PhotoImage(im)
+            except Exception:
+                timage = None
+            self._thumb_images.append(timage)  # keep reference for GC
+
+            img_label = tk.Label(
+                cell,
+                image=timage,
+                bg="#eee",
+                cursor="hand2",
+            )
+            if timage is not None:
+                img_label.image = timage
+            img_label.pack(padx=2, pady=(2, 0))
+
+            name_short = photo.file_name or Path(photo.catalog_path).name
+            if len(name_short) > 16:
+                name_short = name_short[:15] + "…"
+            cap = tk.Label(
+                cell,
+                text=name_short,
+                font=("", 8),
+                bg=cell["bg"],
+                fg="#333",
+                anchor="center",
+            )
+            cap.pack(fill="x", padx=2, pady=(0, 2))
+
+            def _click(event, index=idx):
+                self.photo_index = index
+                self._render_photo()
+                self._update_gallery_selection()
+
+            def _dblclick(event, index=idx):
+                self.photo_index = index
+                self._open_main_preview()
+
+            for widget in (cell, img_label, cap):
+                widget.bind("<Button-1>", _click)
+                widget.bind("<Double-Button-1>", _dblclick)
+                widget.bind("<Double-1>", _dblclick)
+                self._bind_gallery_wheel(widget)
+            self._thumb_cells.append(cell)
+            self._gallery_wheel_widgets.append(widget)
+
+        # Deagătăm vechile legături <Configure> (ca să nu se acumuleze la fiecare
+        # re-render) și re-legăm _layout_gallery, care face acum și refit-ul.
+        try:
+            self._gallery_inner.unbind("<Configure>")
+            self._gallery_canvas.unbind("<Configure>")
+        except tk.TclError:
+            pass
+        self._gallery_inner.bind("<Configure>", lambda _e: self._layout_gallery())
+        self._gallery_canvas.bind("<Configure>", lambda _e: self._layout_gallery())
+        self._layout_gallery()
+
+    def _gallery_wheel(self, event: tk.Event) -> str:
+        """Scroll vertical pentru galerie, activat de la orice widget din galerie."""
+        self._gallery_canvas.yview_scroll(
+            -1 if event.delta > 0 or event.num == 4 else 1, "units"
+        )
+        return "break"
+
+    def _bind_gallery_wheel(self, w: tk.Widget) -> None:
+        try:
+            w.bind("<MouseWheel>", self._gallery_wheel, add="+")
+            w.bind("<Button-4>", self._gallery_wheel, add="+")
+            w.bind("<Button-5>", self._gallery_wheel, add="+")
+        except tk.TclError:
+            pass
+
+    def _layout_gallery(self) -> None:
+        """Distribuie celulele pe rânduri (grid) în funcție de lățimea canvas-ului.
+
+        Se scade lățimea scrollbar-ului vertical și un margin de siguranță,
+        astfel încât ultima coloană nu mai este tăiată.
+        """
+        if not self._thumb_cells:
+            return
+        canvas_w = self._gallery_canvas.winfo_width()
+        if canvas_w <= 1:
+            canvas_w = 400  # fallback înainte de prima mapare
+        # Sincronizează lățimea inner-frame-ului cu lățimea canvas-ului, ca
+        # reflow-ul să reflecte spațiul real disponibil (inclusiv la Full Screen).
+        try:
+            self._gallery_canvas.itemconfigure(
+                self._gallery_win, width=canvas_w
+            )
+        except tk.TclError:
+            pass
+        usable_w = canvas_w - 40  # scrollbar vertical + border + margin
+        thumb = THUMB_SIZE
+        cell_w = thumb + 24  # celulă (96+12) + bordură + padding grid
+        cols = max(1, usable_w // cell_w)
+        for idx, cell in enumerate(self._thumb_cells):
+            cell.grid_forget()
+            row = idx // cols
+            col = idx % cols
+            cell.grid(row=row, column=col, padx=4, pady=4)
+        self._gallery_canvas.configure(
+            scrollregion=self._gallery_canvas.bbox("all")
+        )
+
+    def _update_gallery_selection(self) -> None:
+        """Reîmprospătează bordura galeriei fără a distruge celulele."""
+        for idx, cell in enumerate(self._thumb_cells):
+            if idx == self.photo_index:
+                cell.configure(bg="#e8f4f8", relief="solid", bd=2)
+            else:
+                cell.configure(bg="#ffffff", relief="solid", bd=1)
+
+    def _open_main_preview(self, event=None, pos: str = "") -> None:
+        """Deschide previzualizarea mare a pozei curente (popup)."""
+        if not self.photos:
+            return
+        photo = self.photos[self.photo_index]
+        self._open_photo_preview(photo.resolved, photo.file_name or "", pos)
+
+    def _open_photo_preview(self, image_path: Path | None, name: str = "", pos: str = "") -> None:
+        """Previzualizare mare a unei poze într-un popup cu scroll."""
+        if image_path is None or not PIL_OK:
+            return
+        path = Path(image_path)
+        if not path.is_file():
+            messagebox.showwarning(
+                lang.t("app_title"), lang.t("photo_missing"), parent=self.win
+            )
+            return
+
+        prev = tk.Toplevel(self.win)
+        prev.title(lang.t("photo_preview"))
+        prev.transient(self.win)
+        # Nu folosim grab_set() pentru a permite focusul pe fereastra principală
+        # când navigăm cu săgețile în preview.
+
+        screen_w = self.win.winfo_screenwidth()
+        screen_h = self.win.winfo_screenheight()
+        max_w = int(screen_w * 0.55)
+        max_h = int(screen_h * 0.62)
+
+        photo = None
+        try:
+            with Image.open(path) as im:
+                im.thumbnail((max_w, max_h))
+                photo = ImageTk.PhotoImage(im)
+        except Exception:
+            photo = None
+
+        img_w = photo.width() if photo else 480
+        img_h = photo.height() if photo else 360
+        # Windows decorations (borders, title bar) eat a few pixels; add a
+        # safe margin so the image is not clipped on the right, especially
+        # for portrait photos.
+        win_w = min(img_w + 60, int(screen_w * 0.72))
+        win_h = min(img_h + 140, int(screen_h * 0.85))
+        prev.geometry(f"{win_w}x{win_h}")
+        if pos:
+            prev.wm_geometry(pos)
+        prev.minsize(420, 360)
+
+        pcanvas = tk.Canvas(prev, highlightthickness=0, background="#f0f0f0")
+        pvscroll = ttk.Scrollbar(
+            prev, orient="vertical", command=pcanvas.yview
+        )
+        phscroll = ttk.Scrollbar(
+            prev, orient="horizontal", command=pcanvas.xview
+        )
+        pcanvas.configure(
+            yscrollcommand=pvscroll.set, xscrollcommand=phscroll.set
+        )
+
+        # Layout simplu și robust: canvas ocupă toată zona, scroll-uri lângă el.
+        pcanvas.pack(side="left", fill="both", expand=True)
+        pvscroll.pack(side="right", fill="y")
+        phscroll.pack(side="bottom", fill="x")
+
+        # Conținutul este centrat în interiorul scrollable-frame-ului.
+        scrollable = tk.Frame(pcanvas, background="#f0f0f0")
+        pcanvas.create_window((0, 0), window=scrollable, anchor="nw")
+        scrollable.bind(
+            "<Configure>",
+            lambda e: pcanvas.configure(scrollregion=pcanvas.bbox("all")),
+        )
+
+        # Centrare orizontală a imaginii și textului pe măsură ce e loc.
+        center = tk.Frame(scrollable, background="#f0f0f0")
+        center.pack(anchor="center", padx=16, pady=16)
+
+        if photo is not None:
+            img_label = tk.Label(
+                center, image=photo, cursor="hand2", background="#f0f0f0"
+            )
+            img_label.image = photo
+            img_label.pack(padx=8, pady=(8, 4))
+
+        info = tk.Label(
+            center,
+            text=f"{name or path.name}\n{path}",
+            justify="center",
+            font=("", 9),
+            fg="#555",
+            background="#f0f0f0",
+            wraplength=max(250, win_w - 120),
+        )
+        info.pack(padx=8, pady=(4, 16))
+
+        def _preview_prev() -> None:
+            """Trece la poza anterioară și re-deschide popup-ul păstrând poziția."""
+            if not self.photos:
+                return
+            # Folosim winfo_x/y în loc de geometry(), ca să obținem poziția
+            # reală chiar și când fereastra nu a fost încă mapată complet.
+            try:
+                prev.update_idletasks()
+                old_x = prev.winfo_x()
+                old_y = prev.winfo_y()
+                old_pos = f"+{old_x}+{old_y}"
+            except tk.TclError:
+                old_pos = ""
+            try:
+                prev.grab_release()
+            except tk.TclError:
+                pass
+            self.photo_index = (self.photo_index - 1) % len(self.photos)
+            prev.destroy()
+            new_prev = self._open_main_preview(pos=old_pos)
+            if new_prev is not None:
+                try:
+                    new_prev.update_idletasks()
+                    if old_pos:
+                        new_prev.wm_geometry(old_pos)
+                    new_prev.update_idletasks()
+                except tk.TclError:
+                    pass
+                # Folosim after_idle pentru a re-aplica poziția după ce fereastra
+                # este complet mapată (transient poate ignora geometry() sincron).
+                if old_pos:
+                    new_prev.after_idle(lambda: new_prev.wm_geometry(old_pos))
+                try:
+                    new_prev.grab_release()
+                except tk.TclError:
+                    pass
+                self.win.focus_set()
+
+        def _preview_next() -> None:
+            """Trece la poza următoare și re-deschide popup-ul păstrând poziția."""
+            if not self.photos:
+                return
+            try:
+                prev.update_idletasks()
+                old_x = prev.winfo_x()
+                old_y = prev.winfo_y()
+                old_pos = f"+{old_x}+{old_y}"
+            except tk.TclError:
+                old_pos = ""
+            try:
+                prev.grab_release()
+            except tk.TclError:
+                pass
+            self.photo_index = (self.photo_index + 1) % len(self.photos)
+            prev.destroy()
+            new_prev = self._open_main_preview(pos=old_pos)
+            if new_prev is not None:
+                try:
+                    new_prev.update_idletasks()
+                    if old_pos:
+                        new_prev.wm_geometry(old_pos)
+                    new_prev.update_idletasks()
+                except tk.TclError:
+                    pass
+                if old_pos:
+                    new_prev.after_idle(lambda: new_prev.wm_geometry(old_pos))
+                try:
+                    new_prev.grab_release()
+                except tk.TclError:
+                    pass
+                self.win.focus_set()
+
+        btn_row = ttk.Frame(center)
+        ttk.Button(
+            btn_row, text=lang.t("preview_prev"), command=_preview_prev
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            btn_row, text=lang.t("preview_next"), command=_preview_next
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            btn_row, text=lang.t("preview_close"), command=prev.destroy
+        ).pack(side="left")
+        btn_row.pack(pady=(0, 16))
+
+        def _wheel(event):
+            pcanvas.yview_scroll(
+                -1 if event.delta > 0 or event.num == 4 else 1, "units"
+            )
+            return "break"
+
+        for widget in (prev, pcanvas, scrollable, center):
+            widget.bind("<MouseWheel>", _wheel)
+            widget.bind("<Button-4>", _wheel)
+            widget.bind("<Button-5>", _wheel)
+
+        prev.bind("<Escape>", lambda _e: prev.destroy())
+        prev.bind("<Left>", lambda _e: _preview_prev())
+        prev.bind("<Right>", lambda _e: _preview_next())
+        prev.focus_set()
+        return prev
     # -------------------------------------------------------------- actions
     def _browse_col(self) -> None:
         """🌐 CoL: open Catalogue of Life with the name as a direct query.
@@ -1791,7 +2189,14 @@ class CatalogBrowser:
         if not name:
             messagebox.showinfo(lang.t("web_title"), lang.t("web_no_species"))
             return
-        url = WIKIPEDIA_SPECIES_URL + quote(name.replace(" ", "_"))
+        # Uncertain species ("Lycogala sp.") have no article of their own —
+        # drop "sp." from the URL and open the genus page directly.
+        url_name = name
+        parts = url_name.split()
+        if (len(parts) > 1
+                and parts[-1].lower().rstrip(".") in ("sp", "spp")):
+            url_name = " ".join(parts[:-1])
+        url = WIKIPEDIA_SPECIES_URL + quote(url_name.replace(" ", "_"))
         webbrowser.open(url)
         self.status_var.set(lang.t("status_web_open", name=name))
 
@@ -2432,12 +2837,10 @@ class CatalogBrowser:
         y = self.win.winfo_rooty()
         if y + height <= bottom:
             return
-        self._placing = True
-        try:
-            wanted = max(top, bottom - height) - self._frame_offset()
-            self.win.geometry(f"+{self.win.winfo_rootx()}+{wanted}")
-        finally:
-            self.win.after_idle(self._clear_placing)
+        # Permite deplasarea ferestrei sub marginea de jos a ecranului (util
+        # pentru a nu acoperi alte aplicații de pe Desktop). Nu mai forțăm
+        # revenirea în sus când utilizatorul l-a mutat manual.
+        return
 
     def _frame_offset(self) -> int:
         """How far the client area sits below the position wm geometry was given.
